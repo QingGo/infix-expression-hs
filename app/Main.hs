@@ -1,75 +1,87 @@
 module Main where
 
+import Control.Exception (throw)
+import Data.Char
+import Data.List
 import System.IO (isEOF)
 
+-- read input infix expression by user
+-- split it into tokens, notice that maybe there are not spaces between tokens
+-- then convert it to postfix expression
+-- and evaluate it and print the result
 main :: IO ()
 main = do
   end <- isEOF
   if end
     then return ()
     else do
-      line <- getLine
-      putStrLn $ "tokens: " ++ show (tokenize line)
-      putStrLn $ "RPN tokens: " ++ show (inFixToRPN $ tokenize line)
-      print $ solveInfix line
+      putStrLn "Enter infix expression:"
+      infixExp <- getLine
+      let tokens = tokenize infixExp
+      putStrLn $ "tokens: " ++ show tokens
+      let postfixExp = infixToPostfix tokens
+      putStrLn $ "RPN tokens: " ++ show postfixExp
+      let result = evaluate postfixExp
+      print result
       main
 
-a = head (foldl foldFunc [] ["rpnTokens"])
-
-solveInfix :: String -> Int
-solveInfix line = head (foldl foldFunc [] (inFixToRPN $ tokenize line))
-
-foldFunc :: [Int] -> String -> [Int]
-foldFunc (x : y : ys) "*" = (x * y) : ys
-foldFunc (x : y : ys) "+" = (x + y) : ys
-foldFunc (x : y : ys) "-" = (y - x) : ys
-foldFunc xs numberString = read numberString : xs
-
-specialToken = "()+-*/"
-
+-- tokenize infix expression into tokens
+-- Example: "23+3.2*(2+1)" -> ["23", "+", "3.2", "*", "(", "2", "+", "1", ")"]
 tokenize :: String -> [String]
-tokenize input =
-  let result = foldl traverseChar ([], "") input
-      buffer = snd result
-   in reverse
-        ( case buffer of
-            [] -> fst result
-            buffer -> reverse buffer : fst result
-        )
+tokenize [] = []
+tokenize (x : xs) = case x of
+  '(' -> "(" : tokenize xs
+  ')' -> ")" : tokenize xs
+  '+' -> "+" : tokenize xs
+  '-' -> "-" : tokenize xs
+  '*' -> "*" : tokenize xs
+  '/' -> "/" : tokenize xs
+  ' ' -> tokenize xs
+  _ ->
+    let (number, rest) = span isDigitOrDot (x : xs)
+     in number : tokenize rest
 
-traverseChar :: ([String], String) -> Char -> ([String], String)
-traverseChar (tokens, buffer) token
-  | token `elem` specialToken = case buffer of
-      [] -> ([token] : tokens, "")
-      buffer -> ([token] : reverse buffer : tokens, "")
-traverseChar old ' ' = old
-traverseChar (tokens, buffer) token = (tokens, token : buffer)
+isDigitOrDot :: Char -> Bool
+isDigitOrDot c = isDigit c || c == '.'
 
+-- get priority of operator
 getExpPriority :: String -> Int
 getExpPriority (x : _)
   | x == '+' || x == '-' = 1
   | x == '*' || x == '/' = 2
+  | x == '(' = 0
+  | otherwise = throw $ userError ("invalid operator: " ++ [x])
 
-inFixToRPN :: [String] -> [String]
-inFixToRPN tokens =
-  let (numStack, expStack) = foldl traverseToken ([], []) tokens
-   in reverse numStack ++ expStack
+-- convert infix expression to postfix expression
+-- Example: ["23", "+", "3.2", "*", "(", "2", "+", "1", ")"] -> ["23", "3.2", "2", "1", "+", "*", "+"]
+infixToPostfix :: [String] -> [String]
+infixToPostfix tokens = reverse $ infixToPostfix' tokens [] []
 
-traverseToken :: ([String], [String]) -> String -> ([String], [String])
-traverseToken (numStack, expStack) token
-  | length token > 1 = (token : numStack, expStack)
-  | let [chartoken] = token in chartoken `notElem` specialToken = (token : numStack, expStack)
-traverseToken (numStack, expStack) "(" = (numStack, "(" : expStack)
-traverseToken (numStack, expStack) ")" =
-  let (pops, rest) = span (/= "(") expStack
-   in case rest of
-        [] -> (reverse pops ++ numStack, [])
-        rest -> (reverse pops ++ numStack, tail rest)
-traverseToken (numStack, []) token = (numStack, [token])
-traverseToken (numStack, expStack) token
-  | getExpPriority token > getExpPriority (last expStack) = (numStack, token : expStack)
+-- tokens -> operators stack -> temp output stack -> infix
+infixToPostfix' :: [String] -> [String] -> [String] -> [String]
+infixToPostfix' [] [] output = output
+-- when tokens is empty, put residual operators in temp output stack
+infixToPostfix' [] (x : xs) output = infixToPostfix' [] xs (x : output)
+infixToPostfix' (x : xs) operators output
+  | isNumberString x = infixToPostfix' xs operators (x : output)
+  | x == "(" = infixToPostfix' xs (x : operators) output
+  | x == ")" =
+      let (tempOutput, residualOperators) = span (/= "(") operators
+       in infixToPostfix' xs (tail residualOperators) (tempOutput ++ output)
   | otherwise =
-      let (pops, t : rest) = span (\elem -> elem /= "(" && getExpPriority token > getExpPriority elem) expStack
-       in case t of
-            "(" -> (reverse pops ++ numStack, token : rest)
-            t -> (reverse pops ++ [t] ++ numStack, token : rest)
+      let (tempOutput, residualOperators) = span ((>= getExpPriority x) . getExpPriority) operators
+       in infixToPostfix' xs (x : residualOperators) (tempOutput ++ output)
+
+isNumberString :: String -> Bool
+isNumberString = all isDigitOrDot
+
+-- evaluate postfix expression
+-- Example: ["23", "3.2", "2", "1", "+", "*", "+"] -> 29.2
+evaluate :: [String] -> Double
+evaluate tokens = head $ foldl foldingFunction [] tokens
+  where
+    foldingFunction (x : y : ys) "*" = (y * x) : ys
+    foldingFunction (x : y : ys) "/" = (y / x) : ys
+    foldingFunction (x : y : ys) "+" = (y + x) : ys
+    foldingFunction (x : y : ys) "-" = (y - x) : ys
+    foldingFunction xs numberString = read numberString : xs
